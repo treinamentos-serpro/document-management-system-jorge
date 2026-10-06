@@ -1,32 +1,43 @@
-// Seed do servidor backend do Document Management System.
-//
-// Este arquivo é apenas um ponto de partida mínimo. Ao longo do workshop você
-// vai usar o Agent Mode do GitHub Copilot para construir as camadas:
-//   - routes/       (definição das rotas)
-//   - controllers/  (entrada HTTP e validação)
-//   - services/     (regras de negócio)
-//   - repositories/ (persistência: arquivos locais + metadados em memória)
-//
-// Restrição do projeto: uploads são gravados no filesystem local da aplicação
-// usando multer com diskStorage. Não utilize provedores externos.
-
 const express = require('express');
+const path = require('node:path');
+const multer = require('multer');
+const { DocumentRepository } = require('./repositories/documentRepository');
+const { DocumentService } = require('./services/documentService');
+const { createDocumentController } = require('./controllers/documentController');
+const { createDocumentRoutes } = require('./routes/documentRoutes');
+const { createErrorHandler } = require('./middleware/errorHandler');
 
-const app = express();
+function createApp(options = {}) {
+  const storageDir = options.storageDir || process.env.STORAGE_DIR || path.resolve(__dirname, '../storage');
+  const configuredLimit = Number(process.env.MAX_FILE_SIZE_BYTES);
+  const maxFileSizeBytes = options.maxFileSizeBytes || (configuredLimit > 0 ? configuredLimit : 10 * 1024 * 1024);
+  const repository = options.repository || new DocumentRepository(storageDir);
+  const service = options.service || new DocumentService(repository);
+  const controller = createDocumentController(service);
+  const upload = multer({
+    storage: multer.diskStorage({
+      destination: storageDir,
+      filename: (_request, _file, callback) => callback(null, require('node:crypto').randomUUID()),
+    }),
+    limits: { fileSize: maxFileSizeBytes, files: 1 },
+  });
+
+  const app = express();
+  app.use(express.json());
+  app.get('/health', (_request, response) => response.json({ status: 'ok' }));
+  app.use(createDocumentRoutes({ controller, upload }));
+  app.use(createErrorHandler());
+
+  return app;
+}
+
+const app = createApp();
 const PORT = process.env.PORT || 3000;
-
-app.use(express.json());
-
-// Endpoint de verificação de saúde. As demais rotas (/upload, /documents,
-// /documents/:id/download) serão implementadas durante o Passo 2.
-app.get('/health', (req, res) => {
-  res.json({ status: 'ok' });
-});
-
 if (require.main === module) {
   app.listen(PORT, () => {
     console.log(`DMS backend ouvindo na porta ${PORT}`);
   });
 }
 
+app.createApp = createApp;
 module.exports = app;
